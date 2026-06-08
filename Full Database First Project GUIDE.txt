@@ -420,3 +420,35 @@ routes.MapRoute(
 <li>@Html.ActionLink("Departments", "Index", "Departments")</li>
 
 At last press F5 and test everything
+
+
+For Ajaxxx
+
+Create=>
+<div id="msg"></div>
+@using (Ajax.BeginForm(new AjaxOptions
+{
+    HttpMethod = "POST",
+    UpdateTargetId = "msg",
+    InsertionMode = InsertionMode.Replace,
+    OnComplete = "clearAll"
+}))
+
+<script type="text/javascript">
+    $("#form0").attr("enctype", "multipart/form-data")
+    function clearAll() {
+        $("#form0").trigger("reset");
+    }
+
+controller=>
+try{
+if (Request.IsAjaxRequest())
+    return PartialView("_success");
+
+catch{
+if (Request.IsAjaxRequest())
+    return PartialView("_error");
+[comment modelstate.IsValid
+
+same goes for
+Edit=>...
