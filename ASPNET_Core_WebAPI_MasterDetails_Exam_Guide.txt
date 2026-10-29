@@ -1,0 +1,504 @@
+ASP.NET Core Web API — Master-Details Exam Guide
+================================================
+
+
+Requirements Covered
+--------------------
+
+- ASP.NET Core Web API tested from Postman
+- EF Core — Code First
+- Model classes with Data Annotations
+- Custom authentication: Register + Login endpoints, ASP.NET Identity + hand-issued JWT
+- [Authorize] protected endpoints (authorization)
+- Student – Subject master-details CRUD, fully async
+- Seeded Department relational data
+- Data types: text, number, boolean, date, image, relational data
+- Image upload from Postman using IFormFile
+
+
+Final Files To Memorize
+-----------------------
+
+- Controllers/AccountController.cs
+- Controllers/StudentsController.cs
+- Data/SchoolDbContext.cs
+- DTO/Dtos.cs
+- Models/DbModels.cs
+- Program.cs
+- appsettings.json
+
+
+Step 1 — NuGet Packages (install first)
+---------------------------------------
+
+NuGet Package Manager ▸ Manage NuGet Packages for Solution
+
+Install-Package Microsoft.EntityFrameworkCore
+Install-Package Microsoft.EntityFrameworkCore.SqlServer
+Install-Package Microsoft.EntityFrameworkCore.Tools
+Install-Package Microsoft.AspNetCore.Identity.EntityFrameworkCore
+Install-Package Microsoft.AspNetCore.Authentication.JwtBearer
+
+
+Step 2 — appsettings.json
+-------------------------
+
+"ConnectionStrings": {
+    "DefaultConnection": "Data Source=(LocalDB)\\MSSQLLocalDB; Initial Catalog=StudentExamCoreDB; Integrated Security=True; TrustServerCertificate=True"
+  },
+  "JWT": {
+    "Issuer": "StudentExamAPI",
+    "Audience": "StudentExamAPI",
+    "SigningKey": "ThisIsASecretExamSigningKey2026!"
+  }
+
+
+Step 3 — Models/DbModels.cs
+---------------------------
+
+using Microsoft.AspNetCore.Identity;
+using System.ComponentModel.DataAnnotations;
+
+namespace StudentManagementSystemWebApi.Models;
+
+public class ApiUser : IdentityUser { }
+
+public class Department
+{
+    public int Id { get; set; }
+
+    [Required, StringLength(50)]
+    public string Name { get; set; } = "";
+}
+
+public class Student
+{
+    public int Id { get; set; }
+
+    [Required, StringLength(50)]
+    public string Name { get; set; } = "";
+
+    public DateTime Date { get; set; } = DateTime.Now;
+    public bool Activity { get; set; } = true;
+    public string? Image { get; set; }
+    public int DepartmentId { get; set; }
+
+    public Department? Department { get; set; }
+    public List<Subject> Subjects { get; set; } = [];
+}
+
+public class Subject
+{
+    public int Id { get; set; }
+
+    [Required, StringLength(100)]
+    public string Course { get; set; } = "";
+
+    public int Credit { get; set; }
+    public int StudentId { get; set; }
+}
+
+
+Step 4 — Data/SchoolDbContext.cs
+--------------------------------
+
+Base class changes from DbContext to IdentityDbContext<ApiUser> — that's what creates the AspNetUsers table. base.OnModelCreating(modelBuilder) must be called first or Identity's own table mappings never get built.
+
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
+using StudentManagementSystemWebApi.Models;
+
+namespace StudentManagementSystemWebApi.Data;
+
+public class SchoolDbContext(DbContextOptions<SchoolDbContext> options)
+    : IdentityDbContext<ApiUser>(options)
+{
+    public DbSet<Department> Departments => Set<Department>();
+    public DbSet<Student> Students => Set<Student>();
+    public DbSet<Subject> Subjects => Set<Subject>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<Department>().HasData(
+            new Department { Id = 1, Name = "CSE" },
+            new Department { Id = 2, Name = "BBA" },
+            new Department { Id = 3, Name = "English" });
+    }
+}
+
+
+Step 5 — DTO/Dtos.cs
+--------------------
+
+using System.ComponentModel.DataAnnotations;
+
+namespace StudentManagementSystemWebApi.DTO;
+
+public class RegisterDto
+{
+    [Required]
+    public string UserName { get; set; } = "";
+
+    [Required, EmailAddress]
+    public string Email { get; set; } = "";
+
+    [Required]
+    public string Password { get; set; } = "";
+}
+
+public class LoginDto
+{
+    [Required]
+    public string UserName { get; set; } = "";
+
+    [Required]
+    public string Password { get; set; } = "";
+}
+
+
+Step 6 — Program.cs
+-------------------
+
+Adding Identity gives you UserManager<ApiUser>; Adding Authentication.JwtBearer makes [Authorize] understand Bearer tokens. app.UseAuthentication() must come before app.UseAuthorization().
+
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using StudentManagementSystemWebApi.Data;
+using StudentManagementSystemWebApi.Models;
+using System.Text;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddDbContext<SchoolDbContext>(options =>
+    options.UseSqlServer(
+        builder.Configuration.GetConnectionString("DefaultConnection")));
+
+builder.Services.AddIdentity<ApiUser, IdentityRole>()
+    .AddEntityFrameworkStores<SchoolDbContext>();
+
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidIssuer = builder.Configuration["JWT:Issuer"],
+        ValidateAudience = true,
+        ValidAudience = builder.Configuration["JWT:Audience"],
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = new SymmetricSecurityKey(
+            Encoding.UTF8.GetBytes(builder.Configuration["JWT:SigningKey"]!))
+    };
+});
+
+builder.Services.AddControllers();
+
+var app = builder.Build();
+
+if (app.Environment.WebRootPath == null) { app.Environment.WebRootPath = Path.Combine(app.Environment.ContentRootPath, "wwwroot"); }
+
+
+Directory.CreateDirectory(Path.Combine(app.Environment.WebRootPath!, "images"));
+
+app.UseStaticFiles();
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapControllers();
+
+app.Run();
+
+
+Step 7 — Controllers/AccountController.cs
+-----------------------------------------
+
+Register creates a user through Identity; Login checks the password and hands back a signed JWT. Both actions are async — no manual ModelState check needed, [ApiController] already returns 400 automatically for invalid input.
+
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.IdentityModel.Tokens;
+using StudentManagementSystemWebApi.DTO;
+using StudentManagementSystemWebApi.Models;
+using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
+using System.Security.Claims;
+using System.Text;
+
+namespace StudentManagementSystemWebApi.Controllers;
+
+[Route("api/[controller]")]
+[ApiController]
+public class AccountController(
+    UserManager<ApiUser> userManager, IConfiguration configuration) : ControllerBase
+{
+    [HttpPost("register")]
+    public async Task<IActionResult> Register(RegisterDto dto)
+    {
+        var user = new ApiUser { UserName = dto.UserName, Email = dto.Email };
+        var result = await userManager.CreateAsync(user, dto.Password);
+
+        if (!result.Succeeded)
+            return BadRequest(result.Errors.Select(e => e.Description));
+
+        return StatusCode(201, $"User '{user.UserName}' created.");
+    }
+
+    [HttpPost("login")]
+    public async Task<IActionResult> Login(LoginDto dto)
+    {
+        var user = await userManager.FindByNameAsync(dto.UserName);
+        if (user == null || !await userManager.CheckPasswordAsync(user, dto.Password))
+            return Unauthorized("Invalid username or password");
+
+        var claims = new[] { new Claim(ClaimTypes.Name, user.UserName!) };
+        var key = new SymmetricSecurityKey(
+            Encoding.UTF8.GetBytes(configuration["JWT:SigningKey"]!));
+        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var token = new JwtSecurityToken(
+            issuer: configuration["JWT:Issuer"],
+            audience: configuration["JWT:Audience"],
+            claims: claims,
+            expires: DateTime.UtcNow.AddHours(3),
+            signingCredentials: creds);
+
+        return Ok(new { token = new JwtSecurityTokenHandler().WriteToken(token) });
+    }
+}
+
+
+Step 8 — Controllers/StudentsController.cs
+------------------------------------------
+
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using StudentManagementSystemWebApi.Data;
+using StudentManagementSystemWebApi.Models;
+
+namespace StudentManagementSystemWebApi.Controllers;
+
+[Authorize]
+[Route("api/[controller]")]
+[ApiController]
+public class StudentsController(
+    SchoolDbContext db, IWebHostEnvironment env) : ControllerBase
+{
+    [HttpGet]
+    public async Task<IActionResult> Get() => Ok(await db.Students
+        .Include(s => s.Department)
+        .Include(s => s.Subjects)
+        .ToListAsync());
+
+    [HttpGet("{id}")]
+    public async Task<IActionResult> Get(int id)
+    {
+        var student = await db.Students
+            .Include(s => s.Department)
+            .Include(s => s.Subjects)
+            .FirstOrDefaultAsync(s => s.Id == id);
+
+        return student == null ? NotFound() : Ok(student);
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> Post(Student student)
+    {
+        student.Id = 0;
+        student.Image = null;
+        student.Subjects.ForEach(s => s.Id = 0);
+
+        db.Students.Add(student);
+        await db.SaveChangesAsync();
+        return Ok(student);
+    }
+
+    [HttpPut("{id}")]
+    public async Task<IActionResult> Put(int id, Student model)
+    {
+        var student = await db.Students
+            .Include(s => s.Subjects)
+            .FirstOrDefaultAsync(s => s.Id == id);
+
+        if (student == null) return NotFound();
+
+        student.Name = model.Name;
+        student.Date = model.Date;
+        student.Activity = model.Activity;
+        student.DepartmentId = model.DepartmentId;
+
+        db.Subjects.RemoveRange(student.Subjects);
+        student.Subjects = model.Subjects;
+        student.Subjects.ForEach(s => s.Id = 0);
+
+        await db.SaveChangesAsync();
+        return Ok(student);
+    }
+
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> Delete(int id)
+    {
+        var student = await db.Students.FindAsync(id);
+        if (student == null) return NotFound();
+
+        db.Students.Remove(student);
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
+    [HttpPost("{id}/images")]
+    public async Task<IActionResult> UploadImage(int id, IFormFile file)
+    {
+        var student = await db.Students.FindAsync(id);
+        if (student == null) return NotFound();
+        if (file == null || file.Length == 0) return BadRequest("No file uploaded");
+
+        var fileName = $"{id}_{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
+        var path = Path.Combine(env.WebRootPath!, "images", fileName);
+
+        using var stream = System.IO.File.Create(path);
+        await file.CopyToAsync(stream);
+
+        student.Image = fileName;
+        await db.SaveChangesAsync();
+
+        return Ok(new { image = fileName });
+    }
+}
+
+
+Migration
+---------
+
+Package Manager Console:
+
+Add-Migration Initial
+Update-Database
+
+Because SchoolDbContext is now an IdentityDbContext, this migration creates the Identity tables too:  AspNetUsers, AspNetRoles, AspNetUserRoles, AspNetUserClaims, AspNetUserLogins, AspNetUserTokens, AspNetRoleClaims, Departments, Students, Subjects
+
+
+Postman Walkthrough
+-------------------
+
+Run the project and find the port
+
+Press F5 (or Dotnet run). Check the console output or Properties/launchSettings.json (make “launchBrowser” : true) for the actual port.
+
+1. Register an account
+
+POST  {{baseUrl}}/api/account/register
+{
+  "userName": "admin",
+  "email": "admin@test.com",
+  "password": "Admin@123"
+}
+
+Response:
+
+201 Created
+User 'admin' created.
+
+Password must satisfy ASP.NET Identity's default rules: 1 uppercase, 1 lowercase, 1 digit, 1 non-alphanumeric, 6+ characters. "Admin@123" passes; "123456" will not pass.
+
+2. Log in
+
+POST  {{baseUrl}}/api/account/login
+{
+  "userName": "admin",
+  "password": "Admin@123"
+}
+
+Response:
+
+{
+  "token": "eyJhbGciOiJIUzI1NiIs...(much longer)..."
+}
+
+Copy the full token string. In Postman: open the Authorization tab on the collection or each request, type = Bearer Token, paste the token (without the word "Bearer" — Postman adds it for you).
+
+3. Create a student with subjects
+
+POST  {{baseUrl}}/api/students
+Authorization: Bearer <token>
+{
+  "name": "Rina",
+  "date": "2026-02-10",
+  "activity": true,
+  "departmentId": 1,
+  "subjects": [
+    { "course": "SQL", "credit": 3 },
+    { "course": "C#", "credit": 4 }
+  ]
+}
+
+departmentId 1/2/3 = CSE/BBA/English (seeded in SchoolDbContext).
+
+4. Get all students / get one
+
+GET  {{baseUrl}}/api/students  and  {{baseUrl}}/api/students/3
+Authorization: Bearer <token>
+
+Returns each student with Department and Subjects included.
+
+5. Update a student and replace their subjects
+
+PUT  {{baseUrl}}/api/students/3
+Authorization: Bearer <token>
+{
+  "name": "Rina Updated",
+  "date": "2026-03-15",
+  "activity": false,
+  "departmentId": 2,
+  "subjects": [
+    { "course": "ASP.NET Core", "credit": 4 },
+    { "course": "Web API", "credit": 3 }
+  ]
+}
+
+The old subject rows for this student are deleted and replaced with the new array — that's the master-details update.
+
+6. Upload an image
+
+POST  {{baseUrl}}/api/students/3/images
+Authorization: Bearer <token>
+Body: form-data
+
+Field  Value
+Key    file
+Type   File
+Value  choose an image
+
+Response:
+
+{
+  "image": "1_9c2f0a3e-....jpg"
+}
+
+View it in a browser at {{baseUrl}}/images/1_9c2f0a3e-....jpg — app.UseStaticFiles() is what makes that URL work.
+
+7. Delete a student
+
+DELETE  {{baseUrl}}/api/students/3
+Authorization: Bearer <token>
+
+
+Shortest Memory Order
+---------------------
+
+- Department, Student, Subject, ApiUser  (Models/DbModels.cs)
+- SchoolDbContext — IdentityDbContext<ApiUser>, seeded Departments
+- DTO/Dtos.cs — RegisterDto, LoginDto
+- Program.cs — DbContext → Identity → JWT auth → Controllers → middleware order
+- AccountController — Register, Login
+- StudentsController — CRUD + image upload, all async, [Authorize]
+- Migration commands
+- Postman: Register → Login → paste token → CRUD → image upload
